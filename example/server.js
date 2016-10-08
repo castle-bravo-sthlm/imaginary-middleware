@@ -17,4 +17,5 @@ app.use(ic({
 
 app.use('/', express.static('example'));
 
+console.log('server started on port 3000')
 app.listen(3000);

@@ -6,65 +6,64 @@ import parseurl from 'parseurl';
 import request from 'request';
 
 class ImaginaryProxy {
-  constructor(req, res, next, opt){
-    this.req = req;
-    this.res = res;
-    this.next = next;
-    this.serverUrl = opt.serverUrl.replace(/\/?$/, '/');
-    this.cacheRoot = opt.cacheRoot.replace(/\/?$/, '/');
-    this.sourceRoot = opt.sourceRoot.replace(/\/?$/, '/');
+  constructor({serverUrl, cacheRoot, sourceRoot}){
+    this.serverUrl = serverUrl.replace(/\/?$/, '/');
+    this.cacheRoot = cacheRoot.replace(/\/?$/, '/');
+    this.sourceRoot = sourceRoot.replace(/\/?$/, '/');
   }
 
-  async handleQueryRequest(){
+  async handleQueryRequest(req, res, next){
+
+    const self = this;
+    async function _sendCacheFile(sourcePath, cachePath){
+      let file = mz.createReadStream(sourcePath)
+        .pipe(request.post(self.serverUrl + req.query.transform + parseurl(req).search))
+
+      mz.mkdir(self.cacheRoot, (err) => {
+        if(err && err.code !== 'EEXIST')
+          console.err(err)
+
+        file.pipe(res)
+        file.pipe(mz.createWriteStream(cachePath))
+
+      });
+    }
+
+    function _setHeaders(cachePath, hash){
+      res.type(cachePath);
+      res.set({
+        'Cache-Control': 'public, max-age=31536000',
+        'ETag': hash
+      })
+
+      if(req.headers['if-none-match'] === hash){
+        res.status(304)
+      }
+    }
+
     try {
-      const sourcePath = path.join(this.sourceRoot, parseurl(this.req).pathname);
+      const sourcePath = path.join(this.sourceRoot, parseurl(req).pathname);
       const sourceStat = await mz.stat(sourcePath);
       const filetype = path.extname(sourcePath);
 
       const obj = Object.assign({
         mtime: sourceStat.mtime,
         originalPath: sourcePath
-      }, this.req.query);
+      }, req.query);
 
       const hash = hashObj(obj, {algorithm: 'md5'});
       const cachePath = path.join(this.cacheRoot, hash+filetype);
 
-      this._setHeaders(cachePath, hash)
+      _setHeaders(cachePath, hash)
 
       if (await mz.exists(cachePath)){
-        mz.createReadStream(cachePath).pipe(this.res);
+        mz.createReadStream(cachePath).pipe(res);
       }else{
-        await this.createCacheFile(sourcePath, cachePath)
+        await _sendCacheFile(sourcePath, cachePath)
       }
     }catch(err){
       console.log(err);
-      return this.next();
-    }
-  }
-
-  async createCacheFile(sourcePath, cachePath){
-    let file = mz.createReadStream(sourcePath)
-      .pipe(request.post(this.serverUrl + this.req.query.transform + parseurl(this.req).search))
-
-    mz.mkdir(this.cacheRoot, (err) => {
-      if(err && err.code !== 'EEXIST')
-        console.err(err)
-
-      file.pipe(this.res)
-      file.pipe(mz.createWriteStream(cachePath))
-
-    });
-  }
-
-  _setHeaders(cachePath, hash){
-    this.res.type(cachePath);
-    this.res.set({
-      'Cache-Control': 'public, max-age=31536000',
-      'ETag': hash
-    })
-
-    if(this.req.headers['if-none-match'] === hash){
-      this.res.status(304)
+      return next();
     }
   }
 }
@@ -82,7 +81,7 @@ export default function(opt) {
       return next()
     }
 
-    new ImaginaryProxy(req, res, next, opt).handleQueryRequest();
+    new ImaginaryProxy(opt).handleQueryRequest(req, res, next);
 
   };
 }
