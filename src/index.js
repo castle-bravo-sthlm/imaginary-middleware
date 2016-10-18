@@ -71,13 +71,14 @@ class ImaginaryProxy {
 export default function(opt) {
 
   return function(req, res, next) {
-    const filetype = path.extname(req.path);
+    const { pathname, query } = parseurl(req);
+    const filetype = path.extname(pathname);
 
     if(['.jpg', '.png'].indexOf(filetype) == -1){
       return next();
     }
 
-    if(Object.keys(req.query).length === 0){
+    if(!query.transform){
       return next()
     }
 
