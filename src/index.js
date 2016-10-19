@@ -1,9 +1,13 @@
 import "babel-polyfill";
 import path from 'path';
+import url from 'url';
 import mz from 'mz/fs';
 import hashObj from 'hash-obj';
-import parseurl from 'parseurl';
 import request from 'request';
+import bole from 'bole';
+import mime from 'mime-types';
+
+const log = bole('imaginary-middleware');
 
 class ImaginaryProxy {
   constructor({serverUrl, cacheRoot, sourceRoot}){
@@ -13,15 +17,16 @@ class ImaginaryProxy {
   }
 
   async handleQueryRequest(req, res, next){
+    const { pathname, query, search } = url.parse(req.url, true);
 
     const self = this;
     async function _sendCacheFile(sourcePath, cachePath){
       let file = mz.createReadStream(sourcePath)
-        .pipe(request.post(self.serverUrl + req.query.transform + parseurl(req).search))
+        .pipe(request.post(self.serverUrl + query.transform + search))
 
       mz.mkdir(self.cacheRoot, (err) => {
         if(err && err.code !== 'EEXIST')
-          console.err(err)
+          log.error(err)
 
         file.pipe(res)
         file.pipe(mz.createWriteStream(cachePath))
@@ -30,26 +35,24 @@ class ImaginaryProxy {
     }
 
     function _setHeaders(cachePath, hash){
-      res.type(cachePath);
-      res.set({
-        'Cache-Control': 'public, max-age=31536000',
-        'ETag': hash
-      })
+      res.setHeader('Content-Type', mime.contentType(cachePath) || 'application/octet-stream')
+      res.setHeader('Cache-Control', 'public, max-age=31536000')
+      res.setHeader('ETag', hash)
 
       if(req.headers['if-none-match'] === hash){
-        res.status(304)
+        res.statusCode = 304;
       }
     }
 
     try {
-      const sourcePath = path.join(this.sourceRoot, parseurl(req).pathname);
+      const sourcePath = path.join(this.sourceRoot, pathname);
       const sourceStat = await mz.stat(sourcePath);
       const filetype = path.extname(sourcePath);
 
       const obj = Object.assign({
         mtime: sourceStat.mtime,
         originalPath: sourcePath
-      }, req.query);
+      }, query);
 
       const hash = hashObj(obj, {algorithm: 'md5'});
       const cachePath = path.join(this.cacheRoot, hash+filetype);
@@ -62,7 +65,7 @@ class ImaginaryProxy {
         await _sendCacheFile(sourcePath, cachePath)
       }
     }catch(err){
-      console.log(err);
+      log.error(err);
       return next();
     }
   }
@@ -70,10 +73,12 @@ class ImaginaryProxy {
 
 export default function(opt) {
 
-  return function(req, res, next) {
-    const { pathname, query } = parseurl(req);
-    const filetype = path.extname(pathname);
+  const proxy = new ImaginaryProxy(opt);
 
+  return function(req, res, next) {
+    const { pathname, query } = url.parse(req.url, true);
+    const filetype = path.extname(pathname);
+    //log.debug('received', { url: req.url, pathname, query, filetype})
     if(['.jpg', '.png'].indexOf(filetype) == -1){
       return next();
     }
@@ -81,8 +86,8 @@ export default function(opt) {
     if(!query.transform){
       return next()
     }
-
-    new ImaginaryProxy(opt).handleQueryRequest(req, res, next);
+    log.debug('handling', query);
+    proxy.handleQueryRequest(req, res, next);
 
   };
 }
