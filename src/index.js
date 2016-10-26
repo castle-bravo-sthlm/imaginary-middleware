@@ -35,7 +35,7 @@ class ImaginaryProxy {
     }
 
     function _setHeaders(cachePath, hash){
-      res.setHeader('Content-Type', mime.contentType(cachePath) || 'application/octet-stream')
+      res.setHeader('Content-Type', mime.contentType(path.extname(cachePath)) || 'application/octet-stream')
       res.setHeader('Cache-Control', 'public, max-age=31536000')
       res.setHeader('ETag', hash)
 
